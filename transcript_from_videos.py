@@ -1,15 +1,15 @@
 #!/usr/bin/env python
 
 """
-Transcript from MP4s Script
+Transcript from Videos Script
 
-This script takes a folder path as input, scans for MP4 files recursively,
-extracts audio from each MP4 file, and creates transcripts using OpenAI's Whisper.
-Each transcript is saved in its own folder named after the MP4 file.
+This script takes a folder path as input, scans for MP4/MOV files recursively,
+extracts audio from each video file, and creates transcripts using OpenAI's Whisper.
+Each transcript is saved in its own folder named after the video file.
 
 Features:
 - Conda environment check (requires 'management_scripts' environment)
-- Recursive MP4 file scanning
+- Recursive MP4/MOV file scanning
 - Audio extraction using ffmpeg
 - Transcription using Whisper
 - Multiple output formats (txt, json, srt, vtt)
@@ -17,9 +17,9 @@ Features:
 - Detailed debug messages for each processing step
 
 Usage:
-    python transcript_from_mp4s.py /path/to/folder/with/mp4s
-    python transcript_from_mp4s.py /path/to/folder/with/mp4s --model large
-    python transcript_from_mp4s.py /path/to/folder/with/mp4s --reset-tracking
+    python transcript_from_videos.py /path/to/folder/with/videos
+    python transcript_from_videos.py /path/to/folder/with/videos --model large
+    python transcript_from_videos.py /path/to/folder/with/videos --reset-tracking
 """
 
 import os
@@ -64,20 +64,21 @@ def save_tracking_data(tracking_file, data):
     except IOError as e:
         print(f"⚠️  Warning: Could not save tracking data: {e}")
 
-def find_mp4_files(directory):
-    """Recursively find all MP4 files in the directory."""
-    mp4_files = []
+def find_video_files(directory):
+    """Recursively find all supported video files in the directory."""
+    video_files = []
     directory_path = Path(directory)
     
     if not directory_path.exists():
         print(f"❌ Error: Directory {directory} does not exist.")
-        return mp4_files
+        return video_files
     
-    for mp4_file in directory_path.rglob("*.mp4"):
-        if mp4_file.is_file():
-            mp4_files.append(mp4_file)
+    supported_extensions = {".mp4", ".mov"}
+    for video_file in directory_path.rglob("*"):
+        if video_file.is_file() and video_file.suffix.lower() in supported_extensions:
+            video_files.append(video_file)
     
-    return sorted(mp4_files)
+    return sorted(video_files)
 
 def extract_audio_from_mp4(mp4_path, audio_path):
     """Extract audio from MP4 file using ffmpeg."""
@@ -223,19 +224,19 @@ def main():
     check_conda_environment()
     
     parser = argparse.ArgumentParser(
-        description="Extract audio from MP4 files and create transcripts using Whisper",
+        description="Extract audio from MP4/MOV files and create transcripts using Whisper",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  python transcript_from_mp4s.py /path/to/videos
-  python transcript_from_mp4s.py /path/to/videos --model large
-  python transcript_from_mp4s.py /path/to/videos --reset-tracking
+  python transcript_from_videos.py /path/to/videos
+  python transcript_from_videos.py /path/to/videos --model large
+  python transcript_from_videos.py /path/to/videos --reset-tracking
         """
     )
     
     parser.add_argument(
         'folder_path',
-        help='Path to folder containing MP4 files'
+        help='Path to folder containing MP4/MOV files'
     )
     
     parser.add_argument(
@@ -277,15 +278,15 @@ Examples:
     # Load tracking data
     tracking_data = load_tracking_data(tracking_file)
     
-    # Find all MP4 files
-    print(f"🔍 Scanning for MP4 files in: {folder_path}")
-    mp4_files = find_mp4_files(folder_path)
+    # Find all supported video files
+    print(f"🔍 Scanning for MP4/MOV files in: {folder_path}")
+    mp4_files = find_video_files(folder_path)
     
     if not mp4_files:
-        print("❌ No MP4 files found in the specified directory.")
+        print("❌ No MP4/MOV files found in the specified directory.")
         sys.exit(1)
     
-    print(f"📁 Found {len(mp4_files)} MP4 file(s)")
+    print(f"📁 Found {len(mp4_files)} video file(s)")
     
     # Process each MP4 file
     for i, mp4_path in enumerate(mp4_files, 1):
@@ -347,7 +348,7 @@ Examples:
         print(f"✅ Completed processing: {mp4_path.name}")
     
     print(f"\n{'='*60}")
-    print("🎉 All MP4 files processed successfully!")
+    print("🎉 All video files processed successfully!")
     print(f"{'='*60}")
 
 if __name__ == '__main__':
