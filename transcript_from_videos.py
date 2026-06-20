@@ -3,14 +3,14 @@
 """
 Transcript from Videos Script
 
-This script takes a folder path as input, scans for MP4/MOV/TS files recursively,
-extracts MP3 audio from each video file when needed, and creates transcripts
+This script takes a folder path as input, scans for supported media files
+recursively, extracts MP3 audio from each file when needed, and creates transcripts
 using MLX Whisper on Apple Silicon. Each transcript is saved in its own folder
 named after the video file.
 
 Features:
 - Conda environment check (requires 'management_scripts' environment)
-- Recursive MP4/MOV/TS file scanning
+- Recursive MP4/MOV/TS/MKV/M4A/WEBM/WAV file scanning
 - MP3 audio extraction using ffmpeg when direct video is not used
 - Fast transcription using MLX Whisper on Apple Silicon
 - Multiple output formats (txt, json, srt, vtt)
@@ -87,7 +87,7 @@ def find_video_files(directory):
         print(f"❌ Error: Directory {directory} does not exist.")
         return video_files
     
-    supported_extensions = {".mp4", ".mov", ".ts"}
+    supported_extensions = {".mp4", ".mov", ".ts", ".mkv", ".m4a", ".webm", ".wav"}
     for video_file in directory_path.rglob("*"):
         if video_file.is_file() and video_file.suffix.lower() in supported_extensions:
             video_files.append(video_file)
@@ -480,7 +480,7 @@ def main():
     check_conda_environment()
     
     parser = argparse.ArgumentParser(
-        description="Extract audio from MP4/MOV/TS files and create transcripts using MLX Whisper",
+        description="Extract audio from supported media files and create transcripts using MLX Whisper",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
@@ -492,7 +492,7 @@ Examples:
     
     parser.add_argument(
         'folder_path',
-        help='Path to folder containing MP4/MOV/TS files'
+        help='Path to folder containing supported media files (mp4, mov, ts, mkv, m4a, webm, wav)'
     )
     
     parser.add_argument(
@@ -511,7 +511,7 @@ Examples:
     parser.add_argument(
         '--direct-video',
         action='store_true',
-        help='Skip audio extraction and pass MP4 files directly to MLX Whisper; other formats fall back to extracted audio'
+        help='Skip audio extraction and pass MP4 files directly to MLX Whisper; all other supported formats fall back to extracted MP3 audio'
     )
 
     parser.add_argument(
@@ -582,11 +582,11 @@ Examples:
     print(f"🤖 Using MLX Whisper model repo: {hf_model}")
     
     # Find all supported video files
-    print(f"🔍 Scanning for MP4/MOV/TS files in: {folder_path}")
+    print(f"🔍 Scanning for supported media files in: {folder_path}")
     mp4_files = find_video_files(folder_path)
     
     if not mp4_files:
-        print("❌ No MP4/MOV/TS files found in the specified directory.")
+        print("❌ No supported media files found in the specified directory.")
         sys.exit(1)
     
     print(f"📁 Found {len(mp4_files)} video file(s)")
