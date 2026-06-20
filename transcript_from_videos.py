@@ -79,7 +79,7 @@ def save_tracking_data(tracking_file, data):
         print(f"⚠️  Warning: Could not save tracking data: {e}")
 
 def find_video_files(directory):
-    """Recursively find all supported video files in the directory."""
+    """Recursively find all supported media files in the directory."""
     video_files = []
     directory_path = Path(directory)
     
@@ -87,7 +87,7 @@ def find_video_files(directory):
         print(f"❌ Error: Directory {directory} does not exist.")
         return video_files
     
-    supported_extensions = {".mp4", ".mov", ".ts", ".mkv", ".m4a", ".webm", ".wav"}
+    supported_extensions = {".mp4", ".mov", ".ts", ".mkv", ".m4a", ".webm", ".wav", ".mp3"}
     for video_file in directory_path.rglob("*"):
         if video_file.is_file() and video_file.suffix.lower() in supported_extensions:
             video_files.append(video_file)
@@ -123,6 +123,30 @@ def probe_video_duration(video_path: Path, ffprobe_available: bool) -> float | N
         )
         return float(result.stdout.strip())
     except (subprocess.CalledProcessError, ValueError, OSError):
+        return None
+
+def probe_has_audio_stream(video_path: Path) -> bool | None:
+    """Return True/False when ffprobe can inspect audio streams, else None."""
+    if shutil.which('ffprobe') is None:
+        return None
+
+    try:
+        cmd = [
+            'ffprobe',
+            '-v', 'error',
+            '-select_streams', 'a',
+            '-show_entries', 'stream=index',
+            '-of', 'csv=p=0',
+            str(video_path)
+        ]
+        result = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            check=True
+        )
+        return bool(result.stdout.strip())
+    except (subprocess.CalledProcessError, OSError):
         return None
 
 def collect_video_metadata(video_files, tracking_data):
@@ -208,6 +232,21 @@ def print_batch_progress(
     finish_time = time.time() + projected_remaining_seconds
     print(f"Estimated finish: {time.strftime('%H:%M', time.localtime(finish_time))}")
 
+def trim_debug_text(text: str | None, max_chars: int = 1200) -> str:
+    """Keep the most useful beginning and ending portions of subprocess output."""
+    if not text:
+        return ""
+    cleaned = text.strip()
+    if len(cleaned) <= max_chars:
+        return cleaned
+
+    head_chars = max_chars // 2
+    tail_chars = max_chars - head_chars
+    return (
+        f"{cleaned[:head_chars]}\n... [truncated] ...\n"
+        f"{cleaned[-tail_chars:]}"
+    )
+
 def process_single_video(task: dict) -> dict:
     """Process one video in isolation so the parent can manage tracking safely."""
     mp4_path = Path(task['mp4_path'])
@@ -224,23 +263,23 @@ def process_single_video(task: dict) -> dict:
     transcription_elapsed = 0.0
     save_elapsed = 0.0
 
-    transcribe_input_path = mp4_path if task['use_direct_video'] else audio_path
+    transcribe_input_path = mp4_path if task['use_source_directly'] else audio_path
 
-    if not task['use_direct_video']:
-        audio_extracted = False
+    if not task['use_source_directly']:
+        extraction_result = {'success': False}
         if audio_path.exists():
-            audio_extracted = True
+            extraction_result = {'success': True}
         else:
             extraction_start_time = time.time()
-            audio_extracted = extract_audio_from_mp4(mp4_path, audio_path, verbose=False)
+            extraction_result = extract_audio_from_mp4(mp4_path, audio_path, verbose=False)
             extraction_elapsed = time.time() - extraction_start_time
 
-        if not audio_extracted:
+        if not extraction_result['success']:
             return {
                 'success': False,
                 'mp4_path': str(mp4_path),
                 'tracking_key': task['tracking_key'],
-                'error': f"Audio extraction failed for {mp4_path.name}",
+                'error': extraction_result['error'],
             }
 
     outputs_exist = all(path.exists() for path in desired_output_paths.values())
@@ -295,6 +334,7 @@ def process_single_video(task: dict) -> dict:
         'output_folder': str(output_folder),
         'action': action,
         'used_direct_video': task['use_direct_video'],
+        'used_direct_audio_source': task['use_direct_audio_source'],
         'direct_video_fallback': task['direct_video_requested'] and not task['use_direct_video'],
         'extraction_elapsed': extraction_elapsed,
         'transcription_elapsed': transcription_elapsed,
@@ -307,6 +347,17 @@ def extract_audio_from_mp4(mp4_path, audio_path, verbose=True):
     try:
         if verbose:
             print(f"🎵 Extracting audio from: {mp4_path.name}")
+
+        has_audio_stream = probe_has_audio_stream(mp4_path)
+        if has_audio_stream is False:
+            error_message = (
+                f"Audio extraction failed for {mp4_path.name}\n"
+                f"Source file: {mp4_path}\n"
+                f"Reason: No audio stream found in source file."
+            )
+            if verbose:
+                print(f"❌ {error_message}")
+            return {'success': False, 'error': error_message}
         
         # Use MP3 extraction for the non-direct-video fallback path.
         cmd = [
@@ -330,16 +381,34 @@ def extract_audio_from_mp4(mp4_path, audio_path, verbose=True):
         
         if verbose:
             print(f"✅ Audio extracted: {audio_path.name}")
-        return True
+        return {'success': True}
         
     except subprocess.CalledProcessError as e:
+        stderr_text = trim_debug_text(e.stderr)
+        stdout_text = trim_debug_text(e.stdout)
+        error_message = (
+            f"Audio extraction failed for {mp4_path.name}\n"
+            f"Source file: {mp4_path}\n"
+            f"Command: {' '.join(cmd)}\n"
+            f"Exit code: {e.returncode}"
+        )
+        if stderr_text:
+            error_message += f"\nffmpeg stderr:\n{stderr_text}"
+        if stdout_text:
+            error_message += f"\nffmpeg stdout:\n{stdout_text}"
         if verbose:
-            print(f"❌ Audio extraction failed for {mp4_path.name}: {e}")
-        return False
+            print(f"❌ {error_message}")
+        return {'success': False, 'error': error_message}
     except Exception as e:
+        error_message = (
+            f"Unexpected error during audio extraction for {mp4_path.name}\n"
+            f"Source file: {mp4_path}\n"
+            f"Command: {' '.join(cmd)}\n"
+            f"Error: {e}"
+        )
         if verbose:
-            print(f"❌ Unexpected error during audio extraction: {e}")
-        return False
+            print(f"❌ {error_message}")
+        return {'success': False, 'error': error_message}
 
 def import_mlx_whisper():
     """Import MLX Whisper once so batch runs do not repeat module setup."""
@@ -492,7 +561,7 @@ Examples:
     
     parser.add_argument(
         'folder_path',
-        help='Path to folder containing supported media files (mp4, mov, ts, mkv, m4a, webm, wav)'
+        help='Path to folder containing supported media files (mp4, mov, ts, mkv, m4a, webm, wav, mp3)'
     )
     
     parser.add_argument(
@@ -615,7 +684,9 @@ Examples:
         mp4_path = item['path']
         sanitized_name = sanitize_filename(mp4_path.name)
         output_folder = mp4_path.parent / sanitized_name
-        use_direct_video = args.direct_video and mp4_path.suffix.lower() == '.mp4'
+        suffix = mp4_path.suffix.lower()
+        use_direct_video = args.direct_video and suffix == '.mp4'
+        use_direct_audio_source = suffix == '.mp3'
         tasks.append({
             'mp4_path': str(mp4_path),
             'tracking_key': item['tracking_key'],
@@ -625,6 +696,8 @@ Examples:
             'outputs': sorted(outputs),
             'direct_video_requested': args.direct_video,
             'use_direct_video': use_direct_video,
+            'use_direct_audio_source': use_direct_audio_source,
+            'use_source_directly': use_direct_video or use_direct_audio_source,
             'force_transcribe': args.reset_tracking,
             'hf_model': hf_model,
             'model_name': args.model,
@@ -648,6 +721,8 @@ Examples:
 
         if result['action'] == 'existing_outputs':
             print("⏭️  Requested outputs already exist")
+        elif result['used_direct_audio_source']:
+            print("⏭️  Transcribing source MP3 directly")
         elif result['direct_video_fallback']:
             print("⏭️  Requested --direct-video, but this file is not MP4. Falling back to extracted audio.")
         elif result['used_direct_video']:
